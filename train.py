@@ -27,6 +27,7 @@ from lib.data.dataset_motion_3d import MotionDataset3D
 from lib.data.augmentation import Augmenter2D
 from lib.data.datareader_h36m import DataReaderH36M  
 from lib.model.loss import *
+from lib.model.PoseMamba import PoseMamba
 import logger
 from logger import colorlogger
 def parse_args():
@@ -37,7 +38,8 @@ def parse_args():
     parser.add_argument('-r', '--resume', default='', type=str, metavar='FILENAME', help='checkpoint to resume (file name)')
     parser.add_argument('-e', '--evaluate', default='', type=str, metavar='FILENAME', help='checkpoint to evaluate (file name)')
     parser.add_argument('-ms', '--selection', default='latest_epoch.bin', type=str, metavar='FILENAME', help='checkpoint to finetune (file name)')
-    parser.add_argument('-sd', '--seed', default=0, type=int, help='random seed')
+    parser.add_argument("-sd", "--seed", default=0, type=int, help="random seed")
+    parser.add_argument("--action_embed_dim", default=64, type=int, help="Dimension of action embedding")
     opts = parser.parse_args()
     return opts
 
@@ -56,7 +58,7 @@ def save_checkpoint(chk_path, epoch, lr, optimizer, model_pos, min_loss):
         'min_loss' : min_loss
     }, chk_path)
     
-def evaluate(args, model_pos, test_loader, datareader):
+def evaluate(args, model_pos, test_loader, datareader, action_embedding_layer=None):
     log.info('INFO: Testing')
     results_all = []
     model_pos.eval()            

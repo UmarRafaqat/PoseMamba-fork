@@ -32,8 +32,16 @@ class MotionDataset(Dataset):
         raise NotImplementedError 
 
 class MotionDataset3D(MotionDataset):
-    def __init__(self, args, subset_list, data_split):
+    def __init__(self, args, subset_list, data_split, datareader=None): # Add datareader
         super(MotionDataset3D, self).__init__(args, subset_list, data_split)
+        self.datareader = datareader
+        if self.datareader:
+            self.action_names = sorted(list(set(self.datareader.dt_dataset['train']['action']))) # Get all unique action names
+            self.action_to_id = {name: i for i, name in enumerate(self.action_names)}
+        else:
+            self.action_names = []
+            self.action_to_id = {}
+
         self.flip = args.flip
         self.synthetic = args.synthetic
         self.aug = Augmenter3D(args)
@@ -65,4 +73,6 @@ class MotionDataset3D(MotionDataset):
                 motion_2d[:,:,2] = 1
         else:
             raise ValueError('Data split unknown.')    
-        return torch.FloatTensor(motion_2d), torch.FloatTensor(motion_3d)
+        action_name = motion_file["action"]
+        action_id = self.action_to_id.get(action_name, -1) # Get action ID, -1 if not found
+        return torch.FloatTensor(motion_2d), torch.FloatTensor(motion_3d), torch.LongTensor([action_id])

@@ -9,16 +9,23 @@ from lib.data.datareader_h36m import DataReaderH36M
 from tqdm import tqdm
 
 
-def save_clips(subset_name, root_path, train_data, train_labels):
-    len_train = len(train_data)
+def save_clips(subset_name, root_path, data, labels, datareader):
+    len_data = len(data)
     save_path = os.path.join(root_path, subset_name)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    for i in tqdm(range(len_train)):
-        data_input, data_label = train_data[i], train_labels[i]
+    for i in tqdm(range(len_data)):
+        data_input, data_label = data[i], labels[i]
+        # Get the action name from the first frame of the clip
+        if subset_name == "train":
+            action_idx = datareader.split_id_train[i][0]
+        else:
+            action_idx = datareader.split_id_test[i][0]
+        action_name = datareader.dt_dataset[subset_name]["action"][action_idx]
         data_dict = {
             "data_input": data_input,
-            "data_label": data_label
+            "data_label": data_label,
+            "action": action_name
         }
         with open(os.path.join(save_path, "%08d.pkl" % i), "wb") as myprofile:  
             pickle.dump(data_dict, myprofile)
@@ -33,6 +40,6 @@ root_path = "data/motion3d/MB3D_f243s81/H36M-SH"
 if not os.path.exists(root_path):
     os.makedirs(root_path)
 
-save_clips("train", root_path, train_data, train_labels)
-save_clips("test", root_path, test_data, test_labels)
+    save_clips("train", root_path, train_data, train_labels, datareader)
+    save_clips("test", root_path, test_data, test_labels, datareader)
 

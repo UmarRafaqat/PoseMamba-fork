@@ -35,7 +35,7 @@ import numpy as np
 
 from lib.model.mambablocks import BiSTSSMBlock
 class  PoseMamba(nn.Module):
-    def __init__(self, num_frame=9, num_joints=17, in_chans=2, embed_dim_ratio=256, depth=6, mlp_ratio=2., drop_rate=0., drop_path_rate=0.2,  norm_layer=None):
+    def __init__(self, num_frame=9, num_joints=17, in_chans=2, embed_dim_ratio=256, depth=6, mlp_ratio=2., drop_rate=0., drop_path_rate=0.2,  norm_layer=None, action_embed_dim=64):
         """    ##########hybrid_backbone=None, representation_size=None,
         Args:
             num_frame (int, tuple): input frame number
@@ -69,9 +69,12 @@ class  PoseMamba(nn.Module):
                 mlp_ratio = mlp_ratio, 
                 drop_path=dpr[i], 
                 norm_layer=norm_layer,
-                forward_type='v2_plus_poselimbs'
+                forward_type=\'v2_plus_poselimbs\'
                 )
             for i in range(depth)])
+
+        self.action_embed_dim = action_embed_dim
+        self.action_embedding_layer = nn.Linear(action_embed_dim, embed_dim_ratio * 2) # For gamma and beta
 
         self.TTEblocks = nn.ModuleList([
            BiSTSSMBlock(
@@ -79,7 +82,7 @@ class  PoseMamba(nn.Module):
                 mlp_ratio = mlp_ratio, 
                 drop_path=dpr[i], 
                 norm_layer=norm_layer,
-                forward_type='v2_plus_poselimbs'
+                forward_type=\'v2_plus_poselimbs\'
                 )
             for i in range(depth)])
 
@@ -92,49 +95,66 @@ class  PoseMamba(nn.Module):
         )
 
 
-    def STE_forward(self, x):
+    def STE_forward(self, x, gamma=None, beta=None):
         b, f, n, c = x.shape  ##### b is batch size, f is number of frames, n is number of joints, c is channel size?
-        x = rearrange(x, 'b f n c  -> (b f) n c', )
+        x = rearrange(x, \'b f n c  -> (b f) n c\', )
         x = self.Spatial_patch_to_embedding(x)
         x += self.Spatial_pos_embed
         x = self.pos_drop(x)
-        x = rearrange(x, '(b f) n c  -> b f n c', f=f)
+        x = rearrange(x, \'(b f) n c  -> b f n c\', f=f)
         blk = self.STEblocks[0]
         x = blk(x)
+        if gamma is not None and beta is not None:
+            x = x * (gamma + 1) + beta # Apply FiLM after the block
 
         x = self.Spatial_norm(x)
         return x
 
-    def TTE_foward(self, x):
+    def TTE_foward(self, x, gamma=None, beta=None):
         # assert len(x.shape) == 3, "shape is equal to 3"
         b, f, n, c  = x.shape
-        x = rearrange(x, 'b f n cw -> (b n) f cw', f=f)
+        x = rearrange(x, \'b f n cw -> (b n) f cw\', f=f)
         x += self.Temporal_pos_embed[:,:f,:]
         x = self.pos_drop(x)
-        x = rearrange(x, '(b n) f cw -> b f n cw', n=n)
+        x = rearrange(x, \'(b n) f cw -> b f n cw\', n=n)
         blk = self.TTEblocks[0]
         x = blk(x)
+        if gamma is not None and beta is not None:
+            x = x * (gamma + 1) + beta # Apply FiLM after the block
 
         x = self.Temporal_norm(x)
         return x
 
-    def ST_foward(self, x):
+    def ST_foward(self, x, gamma=None, beta=None):
         assert len(x.shape)==4, "shape is equal to 4"
         b, f, n, cw = x.shape
         for i in range(1, self.block_depth):
             steblock = self.STEblocks[i]
             tteblock = self.TTEblocks[i]
             x = steblock(x)
+            if gamma is not None and beta is not None:
+                x = x * (gamma + 1) + beta
             x = self.Spatial_norm(x)
             x = tteblock(x)
+            if gamma is not None and beta is not None:
+                x = x * (gamma + 1) + beta
             x = self.Temporal_norm(x)
         return x
 
-    def forward(self, x):
+    def forward(self, x, action_embedding=None):
+        if action_embedding is not None:
+            gamma_beta = self.action_embedding_layer(action_embedding)
+            gamma, beta = gamma_beta.chunk(2, dim=-1)
+            gamma = gamma.unsqueeze(1).unsqueeze(1) # (B, 1, 1, C)
+            beta = beta.unsqueeze(1).unsqueeze(1) # (B, 1, 1, C)
+        else:
+            gamma, beta = None, None
+
+
         b, f, n, c = x.shape
-        x = self.STE_forward(x)
-        x = self.TTE_foward(x)
-        x = self.ST_foward(x)
+        x = self.STE_forward(x, gamma, beta)
+        x = self.TTE_foward(x, gamma, beta)
+        x = self.ST_foward(x, gamma, beta)
         x = self.head(x)
         x = x.view(b, f, n, -1)
         return x
