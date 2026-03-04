@@ -95,53 +95,10 @@ class  PoseMamba(nn.Module):
         )
 
 
-    def STE_forward(self, x, gamma=None, beta=None):
-        b, f, n, c = x.shape  ##### b is batch size, f is number of frames, n is number of joints, c is channel size?
-        x = rearrange(x, \'b f n c  -> (b f) n c\', )
-        x = self.Spatial_patch_to_embedding(x)
-        x += self.Spatial_pos_embed
-        x = self.pos_drop(x)
-        x = rearrange(x, \'(b f) n c  -> b f n c\', f=f)
-        blk = self.STEblocks[0]
-        x = blk(x)
-        if gamma is not None and beta is not None:
-            x = x * (gamma + 1) + beta # Apply FiLM after the block
-
-        x = self.Spatial_norm(x)
-        return x
-
-    def TTE_foward(self, x, gamma=None, beta=None):
-        # assert len(x.shape) == 3, "shape is equal to 3"
-        b, f, n, c  = x.shape
-        x = rearrange(x, \'b f n cw -> (b n) f cw\', f=f)
-        x += self.Temporal_pos_embed[:,:f,:]
-        x = self.pos_drop(x)
-        x = rearrange(x, \'(b n) f cw -> b f n cw\', n=n)
-        blk = self.TTEblocks[0]
-        x = blk(x)
-        if gamma is not None and beta is not None:
-            x = x * (gamma + 1) + beta # Apply FiLM after the block
-
-        x = self.Temporal_norm(x)
-        return x
-
-    def ST_foward(self, x, gamma=None, beta=None):
-        assert len(x.shape)==4, "shape is equal to 4"
-        b, f, n, cw = x.shape
-        for i in range(1, self.block_depth):
-            steblock = self.STEblocks[i]
-            tteblock = self.TTEblocks[i]
-            x = steblock(x)
-            if gamma is not None and beta is not None:
-                x = x * (gamma + 1) + beta
-            x = self.Spatial_norm(x)
-            x = tteblock(x)
-            if gamma is not None and beta is not None:
-                x = x * (gamma + 1) + beta
-            x = self.Temporal_norm(x)
-        return x
-
     def forward(self, x, action_embedding=None):
+        b, f, n, c = x.shape
+        
+        # FiLM parameter generation
         if action_embedding is not None:
             gamma_beta = self.action_embedding_layer(action_embedding)
             gamma, beta = gamma_beta.chunk(2, dim=-1)
@@ -150,11 +107,33 @@ class  PoseMamba(nn.Module):
         else:
             gamma, beta = None, None
 
+        # Spatial Embedding
+        x = rearrange(x, \'b f n c -> (b f) n c\')
+        x = self.Spatial_patch_to_embedding(x)
+        x += self.Spatial_pos_embed
+        x = self.pos_drop(x)
+        x = rearrange(x, \'(b f) n c -> b f n c\', f=f)
 
-        b, f, n, c = x.shape
-        x = self.STE_forward(x, gamma, beta)
-        x = self.TTE_foward(x, gamma, beta)
-        x = self.ST_foward(x, gamma, beta)
+        # Temporal Embedding
+        x = rearrange(x, \'b f n c -> (b n) f c\')
+        x += self.Temporal_pos_embed[:, :f, :]
+        x = self.pos_drop(x)
+        x = rearrange(x, \'(b n) f c -> b f n c\', n=n)
+
+        # Alternating Spatial and Temporal Mamba Blocks
+        for i in range(self.block_depth):
+            # Spatial Block
+            x = self.STEblocks[i](x)
+            if gamma is not None and beta is not None:
+                x = x * (gamma + 1) + beta
+            x = self.Spatial_norm(x)
+
+            # Temporal Block
+            x = self.TTEblocks[i](x)
+            if gamma is not None and beta is not None:
+                x = x * (gamma + 1) + beta
+            x = self.Temporal_norm(x)
+
         x = self.head(x)
         x = x.view(b, f, n, -1)
         return x
