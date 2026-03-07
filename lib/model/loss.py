@@ -204,3 +204,38 @@ def loss_angle_velocity(x, gt):
     gt_av = gt_a[:,1:] - gt_a[:,:-1]
     return nn.L1Loss()(x_av, gt_av)
 
+
+def loss_bone_consistency(x):
+    '''
+    Ensures bone lengths are consistent across the temporal dimension.
+    Input: (N, T, 17, 3)
+    '''
+    if x.shape[1] <= 1:
+        return torch.tensor(0.0, device=x.device)
+    
+    limb_lens = get_limb_lens(x) # (N, T, 16)
+    # Calculate variance of each bone length over time
+    bone_var = torch.var(limb_lens, dim=1) # (N, 16)
+    return torch.mean(bone_var)
+
+def loss_joint_rom(x):
+    '''
+    Penalizes joint angles that exceed anatomical limits.
+    Input: (N, T, 17, 3)
+    '''
+    angles = get_angles(x) # (N, T, 18) - based on the angle_id in get_angles
+    
+    # Define some basic anatomical limits in radians (approximate)
+    # For example, knees and elbows shouldn't bend backwards (0 to pi)
+    # Here we just penalize very extreme angles as a general constraint
+    # Most human joint angles stay within a certain range.
+    
+    # Penalize angles close to 0 or pi which might indicate collapsing or hyper-extension
+    # This is a simplified ROM loss.
+    lower_limit = 0.1
+    upper_limit = 3.0
+    
+    loss_lower = F.relu(lower_limit - angles)
+    loss_upper = F.relu(angles - upper_limit)
+    
+    return torch.mean(loss_lower + loss_upper)

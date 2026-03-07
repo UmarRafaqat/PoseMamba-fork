@@ -40,6 +40,8 @@ def parse_args():
     parser.add_argument('-ms', '--selection', default='latest_epoch.bin', type=str, metavar='FILENAME', help='checkpoint to finetune (file name)')
     parser.add_argument("-sd", "--seed", default=0, type=int, help="random seed")
     parser.add_argument("--action_embed_dim", default=64, type=int, help="Dimension of action embedding")
+    parser.add_argument("--lambda_bone", default=0.1, type=float, help="Weight for bone consistency loss")
+    parser.add_argument("--lambda_rom", default=0.1, type=float, help="Weight for joint range of motion loss")
     opts = parser.parse_args()
     return opts
 
@@ -205,6 +207,8 @@ def train_epoch(args, model_pos, train_loader, losses, optimizer, has_3d, has_gt
             loss_lg = loss_limb_gt(predicted_3d_pos, batch_gt)
             loss_a = loss_angle(predicted_3d_pos, batch_gt)
             loss_av = loss_angle_velocity(predicted_3d_pos, batch_gt)
+            loss_bone = loss_bone_consistency(predicted_3d_pos)
+            loss_rom = loss_joint_rom(predicted_3d_pos)
             
             w_mpjpe = torch.tensor([1, 1, 2.5, 2.5, 1, 2.5, 2.5, 1, 1, 1, 1.5, 1.5, 4, 4, 1.5, 4, 4]).cuda()
             loss_3d_w = weighted_mpjpe(predicted_3d_pos, batch_gt, w_mpjpe) # 3D weighted
@@ -228,7 +232,9 @@ def train_epoch(args, model_pos, train_loader, losses, optimizer, has_3d, has_gt
                          args.lambda_a           * loss_a  + \
                          args.lambda_av          * loss_av + \
                          args.lambda_3dw          * loss_3d_w + \
-                         args.lambda_diff          * loss_diff 
+                         args.lambda_diff          * loss_diff + \
+                         args.lambda_bone          * loss_bone + \
+                         args.lambda_rom           * loss_rom
                              
             losses['3d_pos'].update(loss_3d_pos.item(), batch_size)
             losses['3d_scale'].update(loss_3d_scale.item(), batch_size)
@@ -237,6 +243,8 @@ def train_epoch(args, model_pos, train_loader, losses, optimizer, has_3d, has_gt
             losses['lg'].update(loss_lg.item(), batch_size)
             losses['angle'].update(loss_a.item(), batch_size)
             losses['angle_velocity'].update(loss_av.item(), batch_size)
+            losses['bone'].update(loss_bone.item(), batch_size)
+            losses['rom'].update(loss_rom.item(), batch_size)
             losses['total'].update(loss_total.item(), batch_size)
         else:
             loss_2d_proj = loss_2d_weighted(predicted_3d_pos, batch_gt, conf)
@@ -386,6 +394,8 @@ def train_with_config(args, opts):
             losses['3d_velocity'] = AverageMeter()
             losses['angle'] = AverageMeter()
             losses['angle_velocity'] = AverageMeter()
+            losses['bone'] = AverageMeter()
+            losses['rom'] = AverageMeter()
             N = 0
                         
             # Curriculum Learning
